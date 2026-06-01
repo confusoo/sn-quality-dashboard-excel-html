@@ -217,6 +217,7 @@
             const issues = [];
             const missingFields = [];
 
+            // Completeness
             let presentCount = 0;
             KEY_FIELDS.forEach(field => {
                 const val = (ticket[field] || '').trim();
@@ -225,34 +226,54 @@
             });
             const completeness = Math.round((presentCount / KEY_FIELDS.length) * 100);
 
+            // Field Accuracy
             let accuracyIssues = 0;
-            if (!VALID_PRIORITIES.includes(ticket.priority)) { accuracyIssues++; issues.push('Invalid priority'); }
-            if (!VALID_STATES.includes(ticket.state)) { accuracyIssues++; issues.push('Unrecognized state'); }
+            if (!VALID_PRIORITIES.includes(ticket.priority || '')) { 
+                accuracyIssues++; issues.push('Invalid priority'); 
+            }
+            if (!VALID_STATES.includes(ticket.state || '')) { 
+                accuracyIssues++; issues.push('Unrecognized state'); 
+            }
             
             const isResolved = ticket.state === 'Resolved' || ticket.state === 'Closed';
             if (isResolved && ticket.resolved_at && ticket.opened_at) {
-                if (new Date(ticket.resolved_at) < new Date(ticket.opened_at)) {
+                const opened = new Date(ticket.opened_at);
+                const resolved = new Date(ticket.resolved_at);
+                if (!isNaN(opened) && !isNaN(resolved) && resolved < opened) {
                     accuracyIssues++; issues.push('Resolved date before opened date');
                 }
             }
 
+            // Worknotes
             const worknotesPresent = (ticket.work_notes || '').trim().length >= 15;
             if (!worknotesPresent) issues.push('Missing or insufficient work notes');
 
+            // SLA
             const madeSla = (ticket.made_sla || '').toString().toLowerCase() === 'true';
             const slaBreached = !madeSla;
             if (slaBreached) issues.push('SLA breached');
 
+            // Calculate fieldAccuracy first
+            const fieldAccuracy = Math.max(0, Math.round(100 - accuracyIssues * 25));
+
+            // Final weighted score
             let score = Math.round(
-                completeness * 0.40 + fieldAccuracy * 0.25 +
-                (worknotesPresent ? 100 : 0) * 0.20 + (slaBreached ? 0 : 100) * 0.15
+                completeness * 0.40 +
+                fieldAccuracy * 0.25 +
+                (worknotesPresent ? 100 : 0) * 0.20 +
+                (slaBreached ? 0 : 100) * 0.15
             );
             score = Math.max(0, Math.min(100, score));
 
             return {
-                ticket, qualityScore: score, completeness,
-                fieldAccuracy: Math.max(0, Math.round(100 - accuracyIssues * 25)),
-                worknotesPresent, slaBreached, missingFields, issues
+                ticket,
+                qualityScore: score,
+                completeness,
+                fieldAccuracy,
+                worknotesPresent,
+                slaBreached,
+                missingFields,
+                issues
             };
         }
 
@@ -298,7 +319,13 @@
                     alert("No data found in file.");
                     return;
                 }
-                processTickets(tickets);
+
+                try {
+                    processTickets(tickets);
+                } catch (err) {
+                    console.error(err);
+                    alert("Error processing file: " + err.message);
+                }
             };
 
             if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
@@ -334,20 +361,27 @@
         }
 
         function normalizeTicket(row) {
+            // Case-insensitive key lookup helper (useful for Excel exports)
+            const get = (key) => {
+                const lowerKey = key.toLowerCase();
+                const foundKey = Object.keys(row).find(k => k.toLowerCase().trim() === lowerKey);
+                return foundKey ? row[foundKey] : '';
+            };
+
             return {
-                number: row.number || '',
-                short_description: row.short_description || '',
-                description: row.description || '',
-                state: row.state || '',
-                priority: row.priority || '',
-                assignment_group: row.assignment_group || '',
-                assigned_to: row.assigned_to || '',
-                opened_at: row.opened_at || '',
-                closed_at: row.closed_at || '',
-                resolved_at: row.resolved_at || '',
-                work_notes: row.work_notes || '',
-                sla_due: row.sla_due || '',
-                made_sla: (row.made_sla || '').toString().toLowerCase()
+                number: get('number'),
+                short_description: get('short_description'),
+                description: get('description'),
+                state: get('state'),
+                priority: get('priority'),
+                assignment_group: get('assignment_group'),
+                assigned_to: get('assigned_to'),
+                opened_at: get('opened_at'),
+                closed_at: get('closed_at'),
+                resolved_at: get('resolved_at'),
+                work_notes: get('work_notes'),
+                sla_due: get('sla_due'),
+                made_sla: get('made_sla').toString().toLowerCase()
             };
         }
 
