@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ServiceNow Ticket Data Quality • Excel + CSV (Single File)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=Space+Grotesk:wght@500;600&amp;display=swap');
+        
+        body { font-family: 'Inter', system_ui, sans-serif; }
+        .font-display { font-family: 'Space Grotesk', 'Inter', system_ui, sans-serif; font-weight: 600; }
+
+        .dashboard { background: #0f172a; color: #e2e8f0; }
+        .card { background: #1e293b; border: 1px solid #334155; }
+        .kpi-value { font-size: 1.75rem; font-weight: 700; line-height: 1; }
+        .score-pill { 
+            display: inline-flex; align-items: center; justify-content: center; 
+            min-width: 42px; padding: 1px 10px; border-radius: 9999px; 
+            font-weight: 700; font-size: 0.875rem; 
+        }
+        .state-badge { font-size: 0.75rem; font-weight: 600; padding: 2px 10px; border-radius: 9999px; }
+        .table-row:hover { background: #334155; }
+        .filter-input { background: #0f172a; border: 1px solid #475569; color: #e2e8f0; }
+        .chart-container { position: relative; }
+        .issue-badge { font-size: 0.65rem; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
+    </style>
+</head>
+<body class="dashboard min-h-screen">
+    <div class="max-w-7xl mx-auto px-6 py-8">
+        <!-- Header -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+            <div>
+                <h1 class="text-3xl font-display tracking-tighter">ServiceNow Ticket Data Quality</h1>
+                <p class="text-slate-400 text-sm mt-1">Single-file • Excel &amp; CSV support • Fully offline</p>
+            </div>
+            <div class="flex items-center gap-3">
+                <button onclick="loadSampleData()" 
+                        class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-sm rounded-lg flex items-center gap-2 transition-colors">
+                    Load Sample Data
+                </button>
+                
+                <label class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-sm rounded-lg flex items-center gap-2 cursor-pointer transition-colors">
+                    <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" class="hidden" onchange="handleFileUpload(event)">
+                    <span>Upload Excel or CSV</span>
+                </label>
+                
+                <button onclick="exportCSV()" 
+                        class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-sm rounded-lg flex items-center gap-2 transition-colors disabled:opacity-50"
+                        id="exportBtn" disabled>
+                    Export CSV
+                </button>
+            </div>
+        </div>
+
+        <div class="text-xs text-slate-500 mb-6 flex items-center gap-2">
+            <div class="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+            <span>100% offline after first load • Supports .xlsx, .xls, and .csv • No installation needed</span>
+        </div>
+
+        <!-- KPIs -->
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8" id="kpiGrid"></div>
+
+        <!-- Filters -->
+        <div class="card rounded-2xl p-5 mb-8">
+            <div class="flex items-center gap-2 mb-4 text-sm font-medium text-slate-400">
+                <span>FILTERS</span>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-4">
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">Search</label>
+                    <input type="text" id="searchInput" placeholder="Ticket number or description..." 
+                           class="w-full filter-input rounded-lg px-3 py-2 text-sm" oninput="applyFilters()">
+                </div>
+                
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">Team</label>
+                    <select id="teamFilter" class="w-full filter-input rounded-lg px-3 py-2 text-sm" onchange="applyFilters()">
+                        <option value="">All Teams</option>
+                    </select>
+                </div>
+                
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">Priority</label>
+                    <select id="priorityFilter" class="w-full filter-input rounded-lg px-3 py-2 text-sm" onchange="applyFilters()">
+                        <option value="">All Priorities</option>
+                    </select>
+                </div>
+                
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">State</label>
+                    <select id="stateFilter" class="w-full filter-input rounded-lg px-3 py-2 text-sm" onchange="applyFilters()">
+                        <option value="">All States</option>
+                    </select>
+                </div>
+                
+                <div>
+                    <label class="block text-xs text-slate-400 mb-1">Min Quality: <span id="minQualityValue">0</span></label>
+                    <input type="range" id="minQuality" min="0" max="100" step="5" value="0" 
+                           class="w-full accent-blue-500" oninput="updateMinQualityLabel(); applyFilters()">
+                </div>
+                
+                <div class="flex items-end">
+                    <label class="flex items-center gap-2 text-sm cursor-pointer">
+                        <input type="checkbox" id="resolvedOnly" class="accent-blue-500 w-4 h-4" onchange="applyFilters()">
+                        <span>Only Resolved / Closed</span>
+                    </label>
+                </div>
+            </div>
+            
+            <div class="mt-4 flex justify-end">
+                <button onclick="resetFilters()" 
+                        class="text-xs px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors">
+                    Reset Filters
+                </button>
+            </div>
+        </div>
+
+        <!-- Charts -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+            <div class="card rounded-2xl p-5">
+                <div class="text-sm font-medium mb-3 text-slate-400">Quality Score Distribution</div>
+                <div class="chart-container h-56"><canvas id="qualityChart"></canvas></div>
+            </div>
+            <div class="card rounded-2xl p-5">
+                <div class="text-sm font-medium mb-3 text-slate-400">SLA Compliance</div>
+                <div class="chart-container h-56"><canvas id="slaChart"></canvas></div>
+            </div>
+            <div class="card rounded-2xl p-5">
+                <div class="text-sm font-medium mb-3 text-slate-400">Work Notes Compliance</div>
+                <div class="chart-container h-56"><canvas id="worknotesChart"></canvas></div>
+            </div>
+        </div>
+
+        <!-- Table -->
+        <div class="card rounded-2xl overflow-hidden mb-8">
+            <div class="px-5 py-4 border-b border-slate-700 flex items-center justify-between">
+                <div class="font-medium">Tickets <span id="tableCount" class="text-slate-400 font-normal">(0)</span></div>
+                <div class="text-xs text-slate-400" id="avgScoreInView"></div>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm">
+                    <thead>
+                        <tr class="bg-slate-800 text-slate-400 text-xs">
+                            <th class="text-left px-5 py-3 font-medium">Ticket</th>
+                            <th class="text-left px-4 py-3 font-medium">Description</th>
+                            <th class="text-left px-4 py-3 font-medium">Team</th>
+                            <th class="text-left px-4 py-3 font-medium">Priority</th>
+                            <th class="text-left px-4 py-3 font-medium">State</th>
+                            <th class="text-left px-4 py-3 font-medium">Quality</th>
+                            <th class="text-left px-4 py-3 font-medium">Issues</th>
+                            <th class="w-12"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="ticketTable" class="divide-y divide-slate-700"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Rules -->
+        <div class="card rounded-2xl p-6 mb-8">
+            <h3 class="font-semibold mb-4 text-lg">Hard-Coded Data Quality Rules</h3>
+            <div class="grid md:grid-cols-2 gap-x-8 gap-y-3 text-sm">
+                <div class="flex gap-3"><div class="text-emerald-400 mt-1">•</div><div><strong>Mandatory Worknotes</strong> — Work notes must contain at least 15 characters.</div></div>
+                <div class="flex gap-3"><div class="text-emerald-400 mt-1">•</div><div><strong>SLA Compliance</strong> — <code class="text-xs bg-slate-800 px-1.5 py-0.5 rounded">made_sla</code> must be true.</div></div>
+                <div class="flex gap-3"><div class="text-emerald-400 mt-1">•</div><div><strong>Completeness</strong> — Key fields present (description, priority, assignment_group, dates, work_notes, etc.).</div></div>
+                <div class="flex gap-3"><div class="text-emerald-400 mt-1">•</div><div><strong>Field Accuracy</strong> — Valid priority (1-5), recognized state, logical dates.</div></div>
+            </div>
+            <p class="text-xs text-slate-500 mt-4">Done = tickets with state <strong>Resolved</strong> or <strong>Closed</strong>.</p>
+        </div>
+
+        <footer class="text-center text-xs text-slate-500">
+            Excel support via SheetJS (CDN) • Works offline after first load • Open <code>index.html</code> directly
+        </footer>
+    </div>
+
+    <!-- Modal -->
+    <div id="modal" class="hidden fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onclick="if (event.target.id === 'modal') closeModal()">
+        <div class="card w-full max-w-lg rounded-2xl p-6" onclick="event.stopImmediatePropagation()">
+            <div class="flex justify-between items-start mb-4">
+                <div>
+                    <div id="modalTicketNumber" class="font-semibold text-xl"></div>
+                    <div id="modalShortDesc" class="text-slate-400 text-sm mt-1"></div>
+                </div>
+                <button onclick="closeModal()" class="text-3xl leading-none text-slate-400 hover:text-white">&times;</button>
+            </div>
+            
+            <div id="modalScores" class="flex gap-4 mb-5 text-sm"></div>
+            <div class="grid grid-cols-2 gap-x-4 gap-y-2 text-sm mb-5" id="modalDetails"></div>
+            
+            <div class="mb-4">
+                <div class="text-xs uppercase tracking-wider text-slate-400 mb-1">Work Notes</div>
+                <pre id="modalWorknotes" class="bg-slate-900 p-3 rounded-lg text-xs whitespace-pre-wrap font-mono max-h-32 overflow-auto"></pre>
+            </div>
+            
+            <div id="modalIssues" class="mb-5"></div>
+            
+            <button onclick="closeModal()" class="w-full py-2 bg-slate-700 hover:bg-slate-600 rounded-xl text-sm font-medium">Close</button>
+        </div>
+    </div>
+
+    <script>
+        // ==================== STATE & RULES ====================
+        let allResults = [];
+        let charts = { quality: null, sla: null, worknotes: null };
+        let filteredResults = [];
+
+        const KEY_FIELDS = ['short_description', 'description', 'priority', 'assignment_group', 'assigned_to', 'opened_at', 'resolved_at', 'work_notes'];
+        const VALID_PRIORITIES = ['1','2','3','4','5'];
+        const VALID_STATES = ['New', 'In Progress', 'On Hold', 'Resolved', 'Closed', 'Cancelled'];
+
+        function evaluateTicket(ticket) {
+            const issues = [];
+            const missingFields = [];
+
+            let presentCount = 0;
+            KEY_FIELDS.forEach(field => {
+                const val = (ticket[field] || '').trim();
+                if (val.length > 0) presentCount++;
+                else missingFields.push(field);
+            });
+            const completeness = Math.round((presentCount / KEY_FIELDS.length) * 100);
+
+            let accuracyIssues = 0;
+            if (!VALID_PRIORITIES.includes(ticket.priority)) { accuracyIssues++; issues.push('Invalid priority'); }
+            if (!VALID_STATES.includes(ticket.state)) { accuracyIssues++; issues.push('Unrecognized state'); }
+            
+            const isResolved = ticket.state === 'Resolved' || ticket.state === 'Closed';
+            if (isResolved && ticket.resolved_at && ticket.opened_at) {
+                if (new Date(ticket.resolved_at) < new Date(ticket.opened_at)) {
+                    accuracyIssues++; issues.push('Resolved date before opened date');
+                }
+            }
+
+            const worknotesPresent = (ticket.work_notes || '').trim().length >= 15;
+            if (!worknotesPresent) issues.push('Missing or insufficient work notes');
+
+            const madeSla = (ticket.made_sla || '').toString().toLowerCase() === 'true';
+            const slaBreached = !madeSla;
+            if (slaBreached) issues.push('SLA breached');
+
+            let score = Math.round(
+                completeness * 0.40 + fieldAccuracy * 0.25 +
+                (worknotesPresent ? 100 : 0) * 0.20 + (slaBreached ? 0 : 100) * 0.15
+            );
+            score = Math.max(0, Math.min(100, score));
+
+            return {
+                ticket, qualityScore: score, completeness,
+                fieldAccuracy: Math.max(0, Math.round(100 - accuracyIssues * 25)),
+                worknotesPresent, slaBreached, missingFields, issues
+            };
+        }
+
+        function calculateStats(results) {
+            if (!results.length) return { total: 0, resolved: 0, avgQuality: 0, slaBreaches: 0, missingWorknotes: 0, highQuality: 0 };
+            const resolved = results.filter(r => ['Resolved','Closed'].includes(r.ticket.state)).length;
+            const avg = Math.round(results.reduce((s, r) => s + r.qualityScore, 0) / results.length);
+            return {
+                total: results.length, resolved, avgQuality: avg,
+                slaBreaches: results.filter(r => r.slaBreached).length,
+                missingWorknotes: results.filter(r => !r.worknotesPresent).length,
+                highQuality: results.filter(r => r.qualityScore >= 85).length
+            };
+        }
+
+        // ==================== FILE HANDLING ====================
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const data = e.target.result;
+                let tickets = [];
+
+                if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+                    // Excel via SheetJS
+                    try {
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+                        tickets = XLSX.utils.sheet_to_json(firstSheet);
+                    } catch (err) {
+                        alert("Failed to read Excel file: " + err.message);
+                        return;
+                    }
+                } else {
+                    // CSV
+                    tickets = parseCSV(data);
+                }
+
+                if (!tickets.length) {
+                    alert("No data found in file.");
+                    return;
+                }
+                processTickets(tickets);
+            };
+
+            if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+                reader.readAsArrayBuffer(file);
+            } else {
+                reader.readAsText(file);
+            }
+            event.target.value = '';
+        }
+
+        function parseCSV(text) {
+            const lines = text.trim().split(/\r?\n/);
+            if (lines.length < 2) return [];
+            const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+            const rows = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                if (!lines[i].trim()) continue;
+                const values = [];
+                let current = '', inQuotes = false;
+                for (let char of lines[i]) {
+                    if (char === '"' && !inQuotes) { inQuotes = true; continue; }
+                    if (char === '"' && inQuotes) { inQuotes = false; continue; }
+                    if (char === ',' && !inQuotes) { values.push(current.trim()); current = ''; }
+                    else current += char;
+                }
+                values.push(current.trim());
+                const obj = {};
+                headers.forEach((h, idx) => obj[h] = values[idx] || '');
+                rows.push(obj);
+            }
+            return rows;
+        }
+
+        function normalizeTicket(row) {
+            return {
+                number: row.number || '',
+                short_description: row.short_description || '',
+                description: row.description || '',
+                state: row.state || '',
+                priority: row.priority || '',
+                assignment_group: row.assignment_group || '',
+                assigned_to: row.assigned_to || '',
+                opened_at: row.opened_at || '',
+                closed_at: row.closed_at || '',
+                resolved_at: row.resolved_at || '',
+                work_notes: row.work_notes || '',
+                sla_due: row.sla_due || '',
+                made_sla: (row.made_sla || '').toString().toLowerCase()
+            };
+        }
+
+        function processTickets(rawTickets) {
+            allResults = rawTickets
+                .filter(t => t.number)
+                .map(normalizeTicket)
+                .map(evaluateTicket);
+
+            filteredResults = [...allResults];
+            renderKPIs(allResults);
+            populateFilterOptions(allResults);
+            renderTable(allResults);
+            renderCharts(allResults);
+            updateTableHeader(allResults);
+        }
+
+        // ==================== UI RENDERING (same as previous version) ====================
+        function getScoreColor(score) {
+            if (score >= 85) return '#22c55e';
+            if (score >= 65) return '#eab308';
+            return '#ef4444';
+        }
+
+        function renderKPIs(results) {
+            const stats = calculateStats(results);
+            const el = document.getElementById('kpiGrid');
+            el.innerHTML = `
+                <div class="card rounded-2xl p-4"><div class="kpi-value">${stats.total}</div><div class="text-xs text-slate-400 mt-1">Tickets Analyzed</div></div>
+                <div class="card rounded-2xl p-4"><div class="kpi-value">${stats.resolved}</div><div class="text-xs text-slate-400 mt-1">Resolved / Closed</div></div>
+                <div class="card rounded-2xl p-4"><div class="kpi-value" style="color:${getScoreColor(stats.avgQuality)}">${stats.avgQuality}</div><div class="text-xs text-slate-400 mt-1">Avg Quality Score</div></div>
+                <div class="card rounded-2xl p-4"><div class="kpi-value">${stats.highQuality}</div><div class="text-xs text-slate-400 mt-1">High Quality (≥85)</div></div>
+                <div class="card rounded-2xl p-4 border border-amber-900/50"><div class="kpi-value text-amber-400">${stats.slaBreaches}</div><div class="text-xs text-slate-400 mt-1">SLA Breaches</div></div>
+                <div class="card rounded-2xl p-4 border border-amber-900/50"><div class="kpi-value text-amber-400">${stats.missingWorknotes}</div><div class="text-xs text-slate-400 mt-1">Missing Worknotes</div></div>
+            `;
+        }
+
+        function populateFilterOptions(results) {
+            const teams = [...new Set(results.map(r => r.ticket.assignment_group))].filter(Boolean).sort();
+            const prios = [...new Set(results.map(r => r.ticket.priority))].filter(Boolean).sort();
+            const states = [...new Set(results.map(r => r.ticket.state))].filter(Boolean).sort();
+
+            document.getElementById('teamFilter').innerHTML = '<option value="">All Teams</option>' + teams.map(t => `<option>${t}</option>`).join('');
+            document.getElementById('priorityFilter').innerHTML = '<option value="">All Priorities</option>' + prios.map(p => `<option>${p}</option>`).join('');
+            document.getElementById('stateFilter').innerHTML = '<option value="">All States</option>' + states.map(s => `<option>${s}</option>`).join('');
+        }
+
+        function updateMinQualityLabel() {
+            document.getElementById('minQualityValue').textContent = document.getElementById('minQuality').value;
+        }
+
+        function applyFilters() {
+            const search = document.getElementById('searchInput').value.toLowerCase().trim();
+            const team = document.getElementById('teamFilter').value;
+            const prio = document.getElementById('priorityFilter').value;
+            const state = document.getElementById('stateFilter').value;
+            const minQ = parseInt(document.getElementById('minQuality').value);
+            const onlyResolved = document.getElementById('resolvedOnly').checked;
+
+            filteredResults = allResults.filter(r => {
+                const t = r.ticket;
+                const s = !search || t.number.toLowerCase().includes(search) || t.short_description.toLowerCase().includes(search);
+                const tm = !team || t.assignment_group === team;
+                const p = !prio || t.priority === prio;
+                const st = !state || t.state === state;
+                const q = r.qualityScore >= minQ;
+                const res = !onlyResolved || ['Resolved','Closed'].includes(t.state);
+                return s && tm && p && st && q && res;
+            });
+
+            renderTable(filteredResults);
+            renderCharts(filteredResults);
+            updateTableHeader(filteredResults);
+        }
+
+        function updateTableHeader(results) {
+            document.getElementById('tableCount').textContent = `(${results.length})`;
+            const avg = results.length ? Math.round(results.reduce((s, r) => s + r.qualityScore, 0) / results.length) : 0;
+            document.getElementById('avgScoreInView').innerHTML = `Avg: <span style="color:${getScoreColor(avg)}">${avg}</span>`;
+            document.getElementById('exportBtn').disabled = results.length === 0;
+        }
+
+        function renderTable(results) {
+            const tbody = document.getElementById('ticketTable');
+            tbody.innerHTML = '';
+            if (!results.length) {
+                tbody.innerHTML = `<tr><td colspan="8" class="px-5 py-12 text-center text-slate-400">No matching tickets.</td></tr>`;
+                return;
+            }
+            results.forEach(r => {
+                const t = r.ticket;
+                const tr = document.createElement('tr');
+                tr.className = 'table-row cursor-pointer';
+                tr.innerHTML = `
+                    <td class="px-5 py-3 font-medium">${t.number}</td>
+                    <td class="px-4 py-3 text-slate-300 max-w-[280px] truncate">${t.short_description}</td>
+                    <td class="px-4 py-3 text-sm">${t.assignment_group}</td>
+                    <td class="px-4 py-3 text-sm">P${t.priority}</td>
+                    <td class="px-4 py-3"><span class="state-badge ${['Resolved','Closed'].includes(t.state) ? 'bg-emerald-900 text-emerald-400' : 'bg-slate-700'}">${t.state}</span></td>
+                    <td class="px-4 py-3"><span class="score-pill" style="background:${getScoreColor(r.qualityScore)}22;color:${getScoreColor(r.qualityScore)}">${r.qualityScore}</span></td>
+                    <td class="px-4 py-3">
+                        <div class="flex flex-wrap gap-1">
+                            ${!r.worknotesPresent ? `<span class="issue-badge bg-red-900 text-red-400">No worknotes</span>` : ''}
+                            ${r.slaBreached ? `<span class="issue-badge bg-red-900 text-red-400">SLA breach</span>` : ''}
+                            ${r.missingFields.length ? `<span class="issue-badge bg-yellow-900 text-yellow-400">${r.missingFields.length} missing</span>` : ''}
+                        </div>
+                    </td>
+                    <td class="px-4 py-3"><button class="text-xs px-2 py-1 bg-slate-700 hover:bg-slate-600 rounded">Details</button></td>
+                `;
+                tr.onclick = () => showTicketModal(r);
+                tbody.appendChild(tr);
+            });
+        }
+
+        function renderCharts(results) {
+            Object.values(charts).forEach(c => c && c.destroy());
+
+            const buckets = [{range:'90-100',c:0},{range:'80-89',c:0},{range:'70-79',c:0},{range:'60-69',c:0},{range:'<60',c:0}];
+            results.forEach(r => {
+                const s = r.qualityScore; if(s>=90)buckets[0].c++; else if(s>=80)buckets[1].c++; else if(s>=70)buckets[2].c++; else if(s>=60)buckets[3].c++; else buckets[4].c++;
+            });
+
+            charts.quality = new Chart(document.getElementById('qualityChart'), {
+                type: 'bar', data: { labels: buckets.map(b=>b.range), datasets: [{data: buckets.map(b=>b.c), backgroundColor:'#3b82f6', borderRadius:4}] },
+                options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}} }
+            });
+
+            const breached = results.filter(r => r.slaBreached).length;
+            charts.sla = new Chart(document.getElementById('slaChart'), {
+                type: 'doughnut', data: { labels:['Compliant','Breached'], datasets:[{data:[results.length-breached, breached], backgroundColor:['#22c55e','#ef4444']}] },
+                options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}} }
+            });
+
+            const missing = results.filter(r => !r.worknotesPresent).length;
+            charts.worknotes = new Chart(document.getElementById('worknotesChart'), {
+                type: 'doughnut', data: { labels:['Present','Missing'], datasets:[{data:[results.length-missing, missing], backgroundColor:['#22c55e','#ef4444']}] },
+                options: { responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'bottom'}} }
+            });
+        }
+
+        function showTicketModal(result) {
+            const t = result.ticket;
+            document.getElementById('modalTicketNumber').textContent = t.number;
+            document.getElementById('modalShortDesc').textContent = t.short_description;
+            document.getElementById('modalScores').innerHTML = `
+                <div>Quality: <strong style="color:${getScoreColor(result.qualityScore)}">${result.qualityScore}</strong></div>
+                <div>Completeness: <strong>${result.completeness}%</strong></div>
+                <div>Accuracy: <strong>${result.fieldAccuracy}%</strong></div>
+            `;
+            document.getElementById('modalDetails').innerHTML = `
+                <div><strong>State:</strong> ${t.state}</div><div><strong>Priority:</strong> P${t.priority}</div>
+                <div><strong>Team:</strong> ${t.assignment_group}</div><div><strong>Assignee:</strong> ${t.assigned_to || 'Unassigned'}</div>
+                <div><strong>Opened:</strong> ${t.opened_at || '—'}</div><div><strong>Resolved:</strong> ${t.resolved_at || '—'}</div>
+            `;
+            document.getElementById('modalWorknotes').textContent = t.work_notes || '(empty)';
+            const issuesEl = document.getElementById('modalIssues');
+            issuesEl.innerHTML = result.issues.length 
+                ? `<div class="text-xs text-red-400 mb-1">Issues</div><ul class="text-sm text-red-400 list-disc pl-4">${result.issues.map(i => `<li>${i}</li>`).join('')}</ul>`
+                : `<div class="text-emerald-400 text-sm">No major issues detected.</div>`;
+            document.getElementById('modal').classList.remove('hidden'); document.getElementById('modal').classList.add('flex');
+        }
+
+        function closeModal() {
+            const m = document.getElementById('modal');
+            m.classList.remove('flex'); m.classList.add('hidden');
+        }
+
+        function resetFilters() {
+            document.getElementById('searchInput').value = '';
+            document.getElementById('teamFilter').value = '';
+            document.getElementById('priorityFilter').value = '';
+            document.getElementById('stateFilter').value = '';
+            document.getElementById('minQuality').value = 0;
+            document.getElementById('resolvedOnly').checked = false;
+            document.getElementById('minQualityValue').textContent = '0';
+            applyFilters();
+        }
+
+        function exportCSV() {
+            if (!filteredResults.length) return;
+            const headers = ['number','quality_score','completeness','field_accuracy','worknotes_present','sla_breached','state','priority','assignment_group'];
+            let csv = headers.join(',') + '\n';
+            filteredResults.forEach(r => {
+                const t = r.ticket;
+                csv += [t.number, r.qualityScore, r.completeness, r.fieldAccuracy, r.worknotesPresent?'Yes':'No', r.slaBreached?'Yes':'No', t.state, t.priority, t.assignment_group]
+                    .map(v => `"${String(v).replace(/"/g,'""')}"`).join(',') + '\n';
+            });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([csv], {type:'text/csv'}));
+            a.download = `sn-quality-export-${new Date().toISOString().slice(0,10)}.csv`;
+            a.click();
+        }
+
+        // ==================== SAMPLE DATA ====================
+        const SAMPLE_CSV = `number,short_description,description,state,priority,assignment_group,assigned_to,opened_at,closed_at,resolved_at,work_notes,sla_due,made_sla
+INC0010001,Email access issues for new hires,Users in HR cannot access email after onboarding.,Resolved,3,IT Support - Level 1,John Smith,2026-05-10 08:15,2026-05-12 14:30,2026-05-12 14:25,"Verified AD and reset permissions",2026-05-13 08:15,true
+INC0010002,Printer not responding in finance,Finance team reports printer queue stuck.,In Progress,2,IT Support - Level 2,Maria Garcia,2026-05-20 09:45,,,,,2026-05-21 09:45,false
+INC0010003,Laptop won't boot after update,Black screen post Windows patch.,Resolved,4,IT Support - Level 1,Alex Rivera,2026-05-18 11:20,2026-05-19 16:10,2026-05-19 16:05,"Reimaged device",2026-05-20 11:20,true
+INC0010004,VPN dropping frequently,Multiple EMEA users affected.,Resolved,2,Network Team,Sam Patel,2026-05-15 07:30,2026-05-16 10:45,2026-05-16 10:40,,2026-05-17 07:30,false`;
+
+        function loadSampleData() {
+            const parsed = parseCSV(SAMPLE_CSV);
+            processTickets(parsed);
+        }
+
+        function updateMinQualityLabelOnLoad() {
+            document.getElementById('minQualityValue').textContent = document.getElementById('minQuality').value;
+        }
+
+        function initialize() {
+            updateMinQualityLabelOnLoad();
+            loadSampleData(); // Auto-load sample on start
+            console.log('%c[Excel Version] ServiceNow Quality Dashboard ready with Excel support', 'color:#64748b');
+        }
+
+        window.onload = initialize;
+    </script>
+</body>
+</html>
